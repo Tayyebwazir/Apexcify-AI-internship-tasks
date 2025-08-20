@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Expression Classifier</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/2.9.0/tf.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .video-container {
+            text-align: center;
+            margin: 30px 0;
+            position: relative;
+        }
+        
+        #webcam {
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            max-width: 100%;
+            height: auto;
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        button {
+            background: linear-gradient(45deg, #ff6b6b, #ee5a6f);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(238, 90, 111, 0.4);
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(238, 90, 111, 0.6);
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .predictions {
+            margin: 30px 0;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            backdrop-filter: blur(5px);
+        }
+        
+        .prediction-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 15px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+        
+        .prediction-item:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .prediction-label {
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        .prediction-bar {
+            width: 200px;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            margin: 0 15px;
+            overflow: hidden;
+        }
+        
+        .prediction-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+            border-radius: 10px;
+            transition: width 0.5s ease;
+        }
+        
+        .prediction-percentage {
+            font-weight: bold;
+            min-width: 60px;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            font-size: 1.1em;
+        }
+        
+        .url-input {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            margin: 10px 0;
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+        }
+        
+        .emoji {
+            font-size: 2em;
+            margin-right: 10px;
+        }
+        
+        @media (max-width: 600px) {
+            .prediction-bar {
+                width: 120px;
+            }
+            
+            .prediction-item {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .prediction-bar {
+                margin: 10px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎭 Face Expression Classifier</h1>
+        
+        <div class="status" id="status">
+            Ready to load model! Enter your Teachable Machine model URL below.
+        </div>
+        
+        <div class="controls">
+            <input type="text" id="modelUrl" class="url-input" 
+                   placeholder="Paste your Teachable Machine model URL here (e.g., https://teachablemachine.withgoogle.com/models/YOUR_MODEL_ID/)"
+                   value="">
+            <br><br>
+            <button onclick="loadModel()">Load Model</button>
+            <button onclick="startWebcam()" id="startBtn" disabled>Start Webcam</button>
+            <button onclick="stopWebcam()" id="stopBtn" disabled>Stop Webcam</button>
+        </div>
+        
+        <div class="video-container">
+            <video id="webcam" width="400" height="300" autoplay muted></video>
+        </div>
+        
+        <div class="predictions" id="predictions" style="display: none;">
+            <h3>🔍 Live Predictions</h3>
+            <div id="predictionResults"></div>
+        </div>
+    </div>
+
+    <script>
+        let model;
+        let webcam;
+        let isWebcamStarted = false;
+        let animationId;
+        
+        // Status messages
+        function updateStatus(message, isError = false) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.style.background = isError ? 
+                'rgba(255, 107, 107, 0.3)' : 
+                'rgba(255, 255, 255, 0.1)';
+        }
+        
+        // Load the Teachable Machine model
+        async function loadModel() {
+            const modelUrl = document.getElementById('modelUrl').value.trim();
+            
+            if (!modelUrl) {
+                updateStatus('Please enter a model URL!', true);
+                return;
+            }
+            
+            try {
+                updateStatus('Loading model...');
+                
+                // Convert Teachable Machine URL to proper format
+                let modelPath;
+                if (modelUrl.includes('teachablemachine.withgoogle.com/models/')) {
+                    // Extract model ID from URL
+                    const modelId = modelUrl.split('/models/')[1].split('/')[0];
+                    modelPath = `https://teachablemachine.withgoogle.com/models/${modelId}/`;
+                } else {
+                    modelPath = modelUrl;
+                }
+                
+                // Ensure URL ends with /
+                if (!modelPath.endsWith('/')) {
+                    modelPath += '/';
+                }
+                
+                model = await tf.loadLayersModel(modelPath + 'model.json');
+                
+                // Load metadata to get class names
+                const response = await fetch(modelPath + 'metadata.json');
+                const metadata = await response.json();
+                window.classNames = metadata.labels;
+                
+                updateStatus(`Model loaded successfully! Classes: ${window.classNames.join(', ')}`);
+                document.getElementById('startBtn').disabled = false;
+                
+            } catch (error) {
+                console.error('Error loading model:', error);
+                updateStatus('Failed to load model. Please check the URL and try again.', true);
+            }
+        }
+        
+        // Start webcam
+        async function startWebcam() {
+            try {
+                updateStatus('Starting webcam...');
+                
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 400, height: 300 }
+                });
+                
+                webcam = document.getElementById('webcam');
+                webcam.srcObject = stream;
+                
+                webcam.onloadedmetadata = () => {
+                    isWebcamStarted = true;
+                    updateStatus('Webcam started! Classifying expressions...');
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('stopBtn').disabled = false;
+                    document.getElementById('predictions').style.display = 'block';
+                    
+                    // Start prediction loop
+                    predict();
+                };
+                
+            } catch (error) {
+                console.error('Error starting webcam:', error);
+                updateStatus('Failed to start webcam. Please allow camera access.', true);
+            }
+        }
+        
+        // Stop webcam
+        function stopWebcam() {
+            if (webcam && webcam.srcObject) {
+                webcam.srcObject.getTracks().forEach(track => track.stop());
+                webcam.srcObject = null;
+            }
+            
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            
+            isWebcamStarted = false;
+            updateStatus('Webcam stopped');
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('predictions').style.display = 'none';
+        }
+        
+        // Make predictions
+        async function predict() {
+            if (!isWebcamStarted || !model || !webcam) return;
+            
+            try {
+                // Preprocess the image
+                const img = tf.browser.fromPixels(webcam);
+                const resized = tf.image.resizeBilinear(img, [224, 224]);
+                const normalized = resized.div(255.0);
+                const batched = normalized.expandDims(0);
+                
+                // Make prediction
+                const predictions = await model.predict(batched).data();
+                
+                // Display results
+                displayPredictions(predictions);
+                
+                // Clean up tensors
+                img.dispose();
+                resized.dispose();
+                normalized.dispose();
+                batched.dispose();
+                
+            } catch (error) {
+                console.error('Prediction error:', error);
+            }
+            
+            // Continue prediction loop
+            animationId = requestAnimationFrame(predict);
+        }
+        
+        // Display prediction results
+        function displayPredictions(predictions) {
+            const results = document.getElementById('predictionResults');
+            const emojis = ['😊', '😢', '😐']; // Default emojis
+            
+            let html = '';
+            
+            for (let i = 0; i < predictions.length; i++) {
+                const className = window.classNames ? window.classNames[i] : `Class ${i + 1}`;
+                const confidence = (predictions[i] * 100).toFixed(1);
+                const emoji = emojis[i] || '🤔';
+                
+                html += `
+                    <div class="prediction-item">
+                        <div class="prediction-label">
+                            <span class="emoji">${emoji}</span>
+                            ${className}
+                        </div>
+                        <div class="prediction-bar">
+                            <div class="prediction-fill" style="width: ${confidence}%"></div>
+                        </div>
+                        <div class="prediction-percentage">${confidence}%</div>
+                    </div>
+                `;
+            }
+            
+            results.innerHTML = html;
+        }
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', stopWebcam);
+        
+        // Add some example URLs for easy testing
+        window.addEventListener('load', () => {
+            updateStatus('🚀 Ready! Enter your Teachable Machine model URL to get started.');
+        });
+    </script>
+</body>
+</html>
